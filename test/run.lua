@@ -687,7 +687,7 @@ Cmd("/pbfe clear")
 check("clear empties the clipboard", addon.sv.clip, nil)
 ChatClear()
 Cmd("/pbfe saved")
-check("saved lists the name", ChatHas("table: 4 furnishings"), true)
+check("saved lists the name, numbered, with its size", ChatHas("1  table  -  4 furnishings"), true)
 Cmd("/pbfe load table")
 check("load brings it back", #addon.sv.clip.nodes, 4)
 Cmd("/pbfe drop table")
@@ -3084,7 +3084,7 @@ local CLEAR, CLEAR_ALL, STOP, SHOW = "Clear copy / cut", "Clear everything", "St
 addon = Fresh()
 check("the panel is built when the settings library is there", Panel ~= nil and Panel.title, "PB’s FurnitureEditor")
 check("and is listed with the typographic apostrophe: an ASCII one makes the library drop \"PB's \"", Panel.title:find("'", 1, true), nil)
-check("with two headings, a switch, five buttons and an explanation", #Panel.rows, 9)
+check("saved sets first (a heading, an explanation, a name box, Save, a note), then the progress bar and the rest", #Panel.rows, 14)
 check("each button is there", Panel.byLabel[CLEAR] ~= nil and Panel.byLabel[CLEAR_ALL] ~= nil and Panel.byLabel[STOP] ~= nil and Panel.byLabel[SHOW] ~= nil, true)
 
 -- a plain copy goes at once
@@ -3414,6 +3414,209 @@ PressRow("Show a test bar")
 RunFor(500)
 check("and a button shows a test bar", Bar() ~= nil and Bar().hidden, false)
 RunFor(9000)
+
+-- ---------------------------------------------------------------------------------------
+section("37. saved link sets")
+-- ---------------------------------------------------------------------------------------
+local stamp = 1000
+local realStamp = GetTimeStamp
+local function Tick() stamp = stamp + 100; return stamp end
+GetTimeStamp = function() return stamp end
+
+local function Copied()
+	local a = BuildWorld()
+	CopyGroup(1)
+	ChatClear()
+	return a
+end
+
+-- a name with spaces and capitals, found again whatever the case
+addon = Copied()
+Cmd("/pbfe save Throne room")
+check("a name keeps its spaces and capitals", addon.sv.library["Throne room"] ~= nil and #addon.sv.library["Throne room"].nodes, 4)
+check("it says what it saved", ChatHas("saved as Throne room (4 furnishings). /pbfe load Throne room brings it back"), true)
+check("with the time it was saved", addon.sv.library["Throne room"].savedAt, 1000)
+
+-- no name: the add-on names it
+Tick()
+Cmd("/pbfe save")
+check("no name: named for the furnishing it hangs from, and how many", addon.sv.library["Redguard Table x4"] ~= nil, true)
+Tick()
+Cmd("/pbfe save")
+check("the same again: a number is added", addon.sv.library["Redguard Table x4 (2)"] ~= nil, true)
+
+-- the same name twice
+ChatClear()
+Cmd("/pbfe save THRONE ROOM")
+check("a name that is taken (whatever the case) is refused", ChatHas("Throne room is already saved"), true)
+check("and the first is untouched", addon.sv.library["Throne room"].savedAt, 1000)
+Tick()
+Cmd("/pbfe save THRONE ROOM force")
+check("force replaces it", addon.sv.library["THRONE ROOM"] ~= nil and addon.sv.library["Throne room"] == nil, true)
+check("and says so", ChatHas("replaced as THRONE ROOM"), true)
+
+-- the list: numbered, newest first
+ChatClear()
+Cmd("/pbfe saved")
+check("three sets are listed", ChatHas("3 of 20 saved sets, newest first"), true)
+check("the newest is first", ChatHas("1  THRONE ROOM  -  4 furnishings"), true)
+check("then the next", ChatHas("2  Redguard Table x4 (2)  -  4 furnishings"), true)
+
+-- loading: by name, by case, by number
+Cmd("/pbfe clear")
+ChatClear()
+Cmd("/pbfe load throne Room")
+check("a name is found whatever the case", addon.sv.clip ~= nil and #addon.sv.clip.nodes, 4)
+check("it is on the clipboard and offered", addon.sv.clipFresh, true)
+check("and says so", ChatHas("THRONE ROOM is on the clipboard: 4 furnishings"), true)
+Cmd("/pbfe clear")
+Cmd("/pbfe load 3")
+check("a number from the list names a set (3 is the oldest)", ChatHas("Redguard Table x4 is on the clipboard") or ChatHas("is on the clipboard"), true)
+ChatClear()
+Cmd("/pbfe load nothing here")
+check("a name that is not there says so", ChatHas("nothing saved under that name"), true)
+
+-- forgetting
+Cmd("/pbfe drop 2")
+check("a set is dropped by its number", addon.sv.library["Redguard Table x4 (2)"], nil)
+Cmd("/pbfe drop throne room")
+check("or by its name", addon.sv.library["THRONE ROOM"], nil)
+check("one is left", #addon:SavedSets(), 1)
+
+-- nothing to save
+Cmd("/pbfe clear")
+ChatClear()
+Cmd("/pbfe save Empty")
+check("an empty clipboard is not saved", ChatHas("the clipboard is empty: copy a group first"), true)
+
+-- a set survives the game being reloaded
+addon = Copied()
+Cmd("/pbfe save Kept")
+check("it is still there when the UI is reloaded", #LoadAddon().sv.library["Kept"].nodes, 4)
+
+-- a cut that has not been pasted can be saved, and is still a cut when loaded
+addon = CutWorld()
+Cmd("/pbfe cut 1 go")
+RunUntilIdle()
+Cmd("/pbfe save Cutaway")
+ChatClear()
+Cmd("/pbfe saved")
+check("a set made from a cut says so", ChatHas("Cutaway  -  4 furnishings") and ChatHas("(a cut)"), true)
+Cmd("/pbfe reset force")
+ChatClear()
+Cmd("/pbfe load cutaway")
+check("loaded, it is a pending cut again", addon.sv.clip ~= nil and addon.sv.clip.cut, true)
+check("and says so", ChatHas("(a CUT, not yet pasted)"), true)
+-- ...which blocks loading another
+Cmd("/pbfe save Second")
+ChatClear()
+Cmd("/pbfe load second")
+check("a pending cut is not replaced by a load", ChatHas("has not been pasted"), true)
+
+-- room for twenty
+addon = Copied()
+for i = 1, 20 do Tick(); Cmd("/pbfe save Set " .. i) end
+check("twenty sets are kept", #addon:SavedSets(), 20)
+ChatClear()
+Cmd("/pbfe save One too many")
+check("the twenty-first is refused", ChatHas("there are already 20 saved sets"), true)
+check("a name already there can still be replaced when full", select(1, addon:SaveClip("Set 7", true)), "Set 7")
+
+-- the panel
+addon = Copied()
+check("the panel has the rows for saved sets, with nothing saved", Panel.byLabel["Save the copy"] ~= nil and Panel.byLabel["Nothing is saved yet."] ~= nil, true)
+check("and a box for a name", Panel.byLabel["Name for the next save"] ~= nil, true)
+check("no list yet", Panel.byLabel["Saved sets"], nil)
+local function IndexOf(label) for i, row in ipairs(Panel.rows) do if row.label == label then return i end end end
+check("they come before the progress bar", IndexOf("Save the copy") < IndexOf("Progress bar"), true)
+
+Tick()
+PressRow("Save the copy")
+check("Save names it for you when the box is empty", addon.sv.library["Redguard Table x4"] ~= nil, true)
+check("the rows are redrawn: a list, Load and Delete", Panel.byLabel["Saved sets"] ~= nil and Panel.byLabel["Load the selected set"] ~= nil and Panel.byLabel["Delete the selected set"] ~= nil, true)
+check("the note that nothing is saved is gone", Panel.byLabel["Nothing is saved yet."], nil)
+check("the list holds the set, with its size", Panel.byLabel["Saved sets"].items[1].name, "Redguard Table x4  (4)")
+check("and it is the one selected", Panel.byLabel["Saved sets"].getFunction(), "Redguard Table x4  (4)")
+check("the progress bar section is still after it", IndexOf("Save the copy") < IndexOf("Progress bar"), true)
+
+-- a name typed in the box
+Panel.byLabel["Name for the next save"].setFunction("Corner shelf")
+check("the box reads back what was typed", Panel.byLabel["Name for the next save"].getFunction(), "Corner shelf")
+Tick()
+PressRow("Save the copy")
+check("Save uses the name in the box", addon.sv.library["Corner shelf"] ~= nil, true)
+check("and the box is empty again", Panel.byLabel["Name for the next save"].getFunction(), "")
+check("the new set is the one selected, and first (newest)", Panel.byLabel["Saved sets"].getFunction(), "Corner shelf  (4)")
+check("the list now has two", #Panel.byLabel["Saved sets"].items, 2)
+
+-- a name that is taken
+ChatClear()
+AlertClear()
+Panel.byLabel["Name for the next save"].setFunction("corner SHELF")
+PressRow("Save the copy")
+check("a taken name is refused in the panel, in chat and on the screen", ChatHas("Corner shelf is already saved") and AlertHas("Corner shelf is already saved"), true)
+check("and the box keeps what was typed", Panel.byLabel["Name for the next save"].getFunction(), "corner SHELF")
+
+-- choosing, and loading
+local list = Panel.byLabel["Saved sets"]
+list.setFunction(nil, nil, list.items[2])
+check("choosing another set selects it", Panel.byLabel["Saved sets"].getFunction(), "Redguard Table x4  (4)")
+Cmd("/pbfe clear")
+ChatClear()
+AlertClear()
+PressRow("Load the selected set")
+check("Load puts it on the clipboard", addon.sv.clip ~= nil and #addon.sv.clip.nodes, 4)
+check("and says so, and what to do next, on the screen", AlertHas("Loaded: Redguard Table x4. Pick Paste on the quickslot wheel in a house of yours"), true)
+
+-- deleting is asked twice
+PressRow("Delete the selected set")
+check("the first press only asks", addon.sv.library["Redguard Table x4"] ~= nil and ChatHas("will be forgotten. Do it again within 10 s"), true)
+PressRow("Delete the selected set")
+check("the second deletes it", addon.sv.library["Redguard Table x4"], nil)
+check("and the list is redrawn without it", #Panel.byLabel["Saved sets"].items, 1)
+check("with the other one selected", Panel.byLabel["Saved sets"].getFunction(), "Corner shelf  (4)")
+PressRow("Delete the selected set")
+RunFor(11000)
+PressRow("Delete the selected set")
+check("a second press after the time is up asks again", addon.sv.library["Corner shelf"] ~= nil, true)
+PressRow("Delete the selected set")
+check("and then deletes", addon.sv.library["Corner shelf"], nil)
+check("with nothing left the note is back", Panel.byLabel["Nothing is saved yet."] ~= nil and Panel.byLabel["Saved sets"] == nil, true)
+
+-- a set saved by command while the panel was shut shows when it is opened
+Cmd("/pbfe save By command")
+check("the panel does not know yet", Panel.byLabel["Saved sets"], nil)
+OpenPanel()
+check("opening the panel redraws the list", Panel.byLabel["Saved sets"] ~= nil and Panel.byLabel["Saved sets"].items[1].name, "By command  (4)")
+
+-- a library without a text box, or whose text box will not build, or without dynamic rows
+local lib = LibHarvensAddonSettings
+lib.ST_EDIT = nil
+addon = Copied()
+check("without ST_EDIT there is no name box and the rest is there", Panel.byLabel["Name for the next save"] == nil and Panel.byLabel["Save the copy"] ~= nil, true)
+PressRow("Save the copy")
+check("and saving still names it", addon.sv.library["Redguard Table x4"] ~= nil, true)
+lib.ST_EDIT = 7
+
+EditRowFails = true                 -- (a global: the world is rebuilt by Copied)
+addon = Copied()
+check("a text box that will not build does not stop the panel", Panel ~= nil and Panel.byLabel["Save the copy"] ~= nil and Panel.byLabel["Name for the next save"] == nil, true)
+EditRowFails = nil
+
+addon = Copied()
+Panel.RemoveSettings, Panel.AddSettings = nil, nil
+ChatClear()
+PressRow("Save the copy")
+check("an older library without dynamic rows: saving works, nothing is redrawn, nothing breaks", addon.sv.library["Redguard Table x4"] ~= nil and not ChatHas("could not be redrawn"), true)
+
+-- Japanese
+Fresh()
+World.language = "jp"
+LoadAddon()
+check("the rows are in Japanese", Panel.byLabel["コピーしたものを保存"] ~= nil and Panel.byLabel["保存したセット"] ~= nil and Panel.byLabel["選んだセットを読み込む"] ~= nil, true)
+World.language = "en"
+
+GetTimeStamp = realStamp
 
 -- ---------------------------------------------------------------------------------------
 print(string.format("\n%d checks, %d failed", total, failures))

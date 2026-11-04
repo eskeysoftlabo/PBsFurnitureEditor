@@ -113,21 +113,52 @@ WINDOW_MANAGER = {
 	end,
 }
 
--- The settings library (LibHarvensAddonSettings): the rows are recorded by label, so a test can press a button.
+-- The settings library (LibHarvensAddonSettings): the rows are kept in the order they are in, so a test can press a
+-- button, move a dropdown, and see a run of rows taken out and put in again (RemoveSettings / AddSettings).
 Panel = nil
+local callbacks = {}
+CALLBACK_MANAGER = {
+	RegisterCallback = function(_, name, fn)
+		callbacks[name] = callbacks[name] or {}
+		table.insert(callbacks[name], fn)
+	end,
+}
+-- the library tells everyone that a panel was opened
+function OpenPanel()
+	Panel.selected = true
+	for _, fn in ipairs(callbacks["LibHarvensAddonSettings_AddonSelected"] or {}) do fn(CALLBACK_MANAGER, Panel) end
+end
 LibHarvensAddonSettings = {
-	ST_LABEL = 1, ST_SECTION = 2, ST_CHECKBOX = 3, ST_SLIDER = 4, ST_DROPDOWN = 5, ST_BUTTON = 6,
+	ST_LABEL = 1, ST_SECTION = 2, ST_CHECKBOX = 3, ST_SLIDER = 4, ST_DROPDOWN = 5, ST_BUTTON = 6, ST_EDIT = 7,
 	AddAddon = function(_, title)
-		Panel = {
-			title = title,
-			rows = {},
-			byLabel = {},
-			AddSetting = function(self, row)
-				self.rows[#self.rows + 1] = row
-				if row.label then self.byLabel[row.label] = row end
-			end,
-		}
-		return Panel
+		callbacks = {}
+		local panel = { title = title, rows = {} }
+		panel.settings = panel.rows
+		function panel:AddSetting(row)
+			if row.type == LibHarvensAddonSettings.ST_EDIT and EditRowFails then error("this copy of the library cannot build a text row") end
+			self.rows[#self.rows + 1] = row
+		end
+		function panel:AddSettings(list, index)
+			if index then
+				for i, row in ipairs(list) do table.insert(self.rows, index + i - 1, row) end
+			else
+				for _, row in ipairs(list) do self.rows[#self.rows + 1] = row end
+			end
+		end
+		function panel:RemoveSettings(start, count)
+			for _ = 1, count do table.remove(self.rows, start) end
+		end
+		function panel:UpdateControls() self.updates = (self.updates or 0) + 1 end
+		-- rows by their label (a label may be a function)
+		panel.byLabel = setmetatable({}, { __index = function(_, label)
+			for _, row in ipairs(panel.rows) do
+				local l = row.label
+				if type(l) == "function" then l = l() end
+				if l == label then return row end
+			end
+		end })
+		Panel = panel
+		return panel
 	end,
 }
 function PressRow(label)

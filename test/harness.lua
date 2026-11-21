@@ -965,12 +965,18 @@ local function CameraBasis()
 		up = { -sy * sp, cp, -cy * sp },
 	}, c
 end
+-- World.worldAxesFlipped: SPACE_WORLD's horizontal axes are the house's turned half a circle (what the series
+-- measured for raw world coordinates against the housing editor's formula: bearing = heading + pi against = heading).
+-- Its vertical axis is the same.
 function GetCameraForward(space)
 	if World.noCameraForward then error("GetCameraForward is not here") end
 	local b = CameraBasis()
+	if World.worldAxesFlipped then return -b.forward[1], b.forward[2], -b.forward[3] end
 	return b.forward[1], b.forward[2], b.forward[3]
 end
 function HousingEditorGetScreenPointWorldPlaneIntersection(sx, sy, x1, y1, z1, x2, y2, z2, x3, y3, z3)
+	-- World.refuseSecondLook: a client that answers the middle of the screen only (to see what the add-on does without it)
+	if World.refuseSecondLook and sy ~= 540 then return 0, 0, 0 end
 	local b, c = CameraBasis()
 	local p = World.player
 	-- a third-person camera is set back along the heading, on the ground plane
@@ -1179,6 +1185,26 @@ local function PressButton(keybind)
 end
 function DialogChoose(i) World.dialog.selected = i; PressButton("DIALOG_PRIMARY") end
 function DialogCancel() PressButton("DIALOG_NEGATIVE") end
+
+-- ---- the add-on manager ---------------------------------------------------------------
+-- It answers from the real manifest, as the client does: the ## Title line with its colour markup, version and all.
+-- `NoAddOnManager` (a global: the world is rebuilt by Fresh) is a client that has none.
+function ManifestLine(key)
+	for line in io.lines(DIR .. "/PBsFurnitureEditor.addon") do
+		local value = line:match("^## " .. key .. ":%s*(.-)%s*$")
+		if value then return value end
+	end
+end
+function GetAddOnManager()
+	if NoAddOnManager then return nil end
+	return {
+		GetNumAddOns = function() return 2 end,
+		GetAddOnInfo = function(_, index)
+			if index == 1 then return "LibHarvensAddonSettings", "LibHarvensAddonSettings" end
+			return "PBsFurnitureEditor", ManifestLine("Title")
+		end,
+	}
+end
 
 -- ---- loading the add-on -------------------------------------------------------------
 -- Files in manifest order, exactly as the client would load them.

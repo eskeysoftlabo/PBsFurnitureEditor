@@ -3082,7 +3082,7 @@ section("34. the settings panel: forgetting what is held")
 local CLEAR, CLEAR_ALL, STOP, SHOW = "Clear copy / cut", "Clear everything", "Stop what is running", "Show what is held"
 
 addon = Fresh()
-check("the panel is built when the settings library is there", Panel ~= nil and Panel.title, "PB’s FurnitureEditor")
+check("the panel is built when the settings library is there", Panel ~= nil and Panel.title, "PB’s FurnitureEditor " .. ManifestLine("Version"))
 check("and is listed with the typographic apostrophe: an ASCII one makes the library drop \"PB's \"", Panel.title:find("'", 1, true), nil)
 check("saved sets first (a heading, an explanation, a name box, Save, a note), then the progress bar and the rest", #Panel.rows, 14)
 check("each button is there", Panel.byLabel[CLEAR] ~= nil and Panel.byLabel[CLEAR_ALL] ~= nil and Panel.byLabel[STOP] ~= nil and Panel.byLabel[SHOW] ~= nil, true)
@@ -3617,6 +3617,161 @@ check("the rows are in Japanese", Panel.byLabel["コピーしたものを保存"
 World.language = "en"
 
 GetTimeStamp = realStamp
+
+-- ---------------------------------------------------------------------------------------
+section("38. the version in the add-on's name")
+-- ---------------------------------------------------------------------------------------
+local version = ManifestLine("Version")
+check("the manifest's two version lines agree", ManifestLine("Title"):match("([%d%.]+)%s*$"), version)
+
+addon = Fresh()
+check("the version is read back from the manifest's Title line", addon.version, version)
+check("the settings list names the add-on with the version, as the rest of the series do", Panel.title, "PB’s FurnitureEditor " .. version)
+check("with the typographic apostrophe the library does not eat", Panel.title:find("'", 1, true), nil)
+
+ChatClear()
+Cmd("/pbfe")
+check("the help line shows the same version", ChatHas("between your houses (v" .. version .. ")"), true)
+
+-- a client that cannot be asked: the name is listed bare and nothing breaks
+NoAddOnManager = true
+addon = Fresh()
+check("without a manager there is no version", addon.version, "")
+check("the name is then listed without one", Panel ~= nil and Panel.title, "PB’s FurnitureEditor")
+ChatClear()
+Cmd("/pbfe")
+check("and the help line has no empty brackets", ChatHas("between your houses") and not ChatHas("(v"), true)
+NoAddOnManager = nil
+
+-- a manager that throws
+local realManager = GetAddOnManager
+GetAddOnManager = function() error("not ready") end
+addon = Fresh()
+check("a manager that errors is no reason to stop: no version, panel still built", addon.version == "" and Panel ~= nil and Panel.title == "PB’s FurnitureEditor", true)
+GetAddOnManager = realManager
+
+addon = Fresh()
+check("and the version is back once it answers", addon.version, version)
+
+-- ---------------------------------------------------------------------------------------
+section("39. the cursor point: the camera's direction is measured in the house's axes, not assumed")
+-- ---------------------------------------------------------------------------------------
+-- The series measured on a PS5 that raw world coordinates have the camera look along bearing heading + pi, while the
+-- housing editor's formula says heading. If SPACE_WORLD and the house's coordinates differ by that half circle, a
+-- point straight ahead has a negative dot product with "forward" and the old test threw it out as "behind you".
+local flipped = {}
+for _, mode in ipairs({ "flipped", "same" }) do
+	local tag = " [SPACE_WORLD " .. mode .. "]"
+	addon = AimWorld()
+	World.worldAxesFlipped = mode == "flipped"
+
+	World.camera = { yaw = 0, pitch = Down(30) }
+	local aim, why = addon:AimPoint()
+	check("looking down ahead gives a point" .. tag, aim ~= nil, true)
+	near("straight ahead" .. tag, aim and (aim.z - 2100), AHEAD_30, 3)
+	near("and not sideways" .. tag, aim and (aim.x - 1100), 0, 3)
+
+	World.camera = { yaw = 0, pitch = Down(15) }
+	aim = addon:AimPoint()
+	check("a floor point six metres ahead is a point" .. tag, aim ~= nil, true)
+	near("six metres ahead" .. tag, aim and (aim.z - 2100), 160 / math.tan(math.rad(15)), 3)
+
+	World.camera = { yaw = math.rad(90), pitch = Down(30) }
+	aim = addon:AimPoint()
+	near("turned a quarter, it is to the side" .. tag, aim and (aim.x - 1100), AHEAD_30, 3)
+
+	World.camera = { yaw = math.rad(200), pitch = Down(30) }
+	aim = addon:AimPoint()
+	near("turned most of the way round, x" .. tag, aim and (aim.x - 1100), AHEAD_30 * math.sin(math.rad(200)), 3)
+	near("turned most of the way round, z" .. tag, aim and (aim.z - 2100), AHEAD_30 * math.cos(math.rad(200)), 3)
+
+	World.camera = { yaw = 0, pitch = math.rad(20) }
+	aim, why = addon:AimPoint()
+	check("looking up still gives no point" .. tag, aim, nil)
+	check("for the same reason" .. tag, why, "the cursor is not pointing down at the floor")
+
+	-- the camera set back: a little behind the player is fine, well behind is not, whichever way SPACE_WORLD faces
+	World.camera = { yaw = 0, pitch = Down(45), back = 300 }
+	aim = addon:AimPoint()
+	check("a third-person camera still finds the floor" .. tag, aim ~= nil, true)
+	World.camera = { yaw = 0, pitch = Down(45), back = 600 }
+	aim, why = addon:AimPoint()
+	check("well behind the player is refused" .. tag, aim, nil)
+	check("and says so" .. tag, why, "the point is behind you")
+
+	World.camera = { yaw = math.rad(90), pitch = Down(45), back = 600 }
+	aim, why = addon:AimPoint()
+	check("the same, turned a quarter" .. tag, why, "the point is behind you")
+end
+World.worldAxesFlipped = false
+
+-- the measured direction is what the report is built from
+addon = AimWorld()
+World.camera = { yaw = math.rad(90), pitch = Down(30) }
+local measured = addon:AimPoint()
+near("the cursor's direction across the floor: x", measured.facing.x, 1, 1e-6)
+near("z", measured.facing.z, 0, 1e-6)
+
+-- /pbfe aim says how the directions relate: the housing editor's formula ...
+addon = AimWorld()
+World.camera = { yaw = math.rad(90), pitch = Down(30) }
+World.player.rot = math.rad(90)
+ChatClear()
+Cmd("/pbfe aim")
+check("heading = bearing is said to be the housing editor's formula", ChatHas("bearing = heading +0 deg: the housing editor's formula"), true)
+check("SPACE_WORLD in the house's axes is said so", ChatHas("is +0 deg from that: in the house's axes"), true)
+
+-- ... or the PS5 measurement of the series, with SPACE_WORLD turned half a circle
+World.worldAxesFlipped = true
+World.player.rot = math.rad(90) + math.pi
+ChatClear()
+Cmd("/pbfe aim")
+check("bearing = heading + 180 is said to be the series' measurement", ChatHas("(the bearing is the heading + 180) fits"), true)
+check("and the flipped SPACE_WORLD is said to be the opposite way", ChatHas("the OPPOSITE way to the house's axes"), true)
+check("the point is still found and printed", ChatHas("the cursor meets your floor at x 1377"), true)
+World.worldAxesFlipped = false
+
+-- a heading that is neither
+World.player.rot = math.rad(90) + math.rad(60)
+ChatClear()
+Cmd("/pbfe aim")
+check("another relation is called neither", ChatHas("neither the housing editor's formula nor the series' PS5 measurement"), true)
+
+-- looking almost straight down: no direction can be read, and nothing is thrown out for it
+addon = AimWorld()
+World.camera = { yaw = 0, pitch = Down(89.9) }
+local steep, steepWhy = addon:AimPoint()
+check("looking straight down is a point at the feet", steep ~= nil, true)
+ChatClear()
+Cmd("/pbfe aim")
+check("and the report says no direction could be measured, or measures it", ChatHas("the cursor looks along bearing") or ChatHas("could not be measured"), true)
+
+-- a client that answers the middle of the screen only: no direction, and the point is still found
+addon = AimWorld()
+World.refuseSecondLook = true
+World.camera = { yaw = 0, pitch = Down(30) }
+local single = addon:AimPoint()
+check("without a second look the point is still found", single ~= nil, true)
+check("with no direction measured", single and single.facing, nil)
+ChatClear()
+Cmd("/pbfe aim")
+check("the report says it could not be measured", ChatHas("could not be measured"), true)
+World.refuseSecondLook = false
+
+-- end to end, with SPACE_WORLD turned: the paste lands at the cursor, not at the feet
+addon = ResvWorld()
+Cmd("/pbfe copy 1")
+EnterHouse(2)
+World.player = { x = 5000, y = 0, z = 5000, rot = 0 }
+World.worldAxesFlipped = true
+World.camera = { yaw = 0, pitch = Down(30) }
+ChatClear()
+Cmd("/pbfe paste aim go")
+RunUntilIdle()
+check("the group is placed", CountOf(2), 4)
+near("at the cursor, by its offset from where you copied: z", FindByData(2, TABLE)[1].z, 5000 + AHEAD_30 - 100, 3)
+check("and not 'could not read where the cursor points'", ChatHas("could not read where the cursor points"), false)
+World.worldAxesFlipped = false
 
 -- ---------------------------------------------------------------------------------------
 print(string.format("\n%d checks, %d failed", total, failures))
